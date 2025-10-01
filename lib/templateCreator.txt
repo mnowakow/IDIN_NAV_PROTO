@@ -1,0 +1,120 @@
+import 'package:flutter/material.dart';
+import 'package:idin_nav_prototype/templateCreatorPen.dart';
+import 'package:idin_nav_prototype/templateCreatorNotifier.dart';
+
+class TemplateCreator extends StatefulWidget {
+  final TemplateCreatorNotifier tcn;
+
+  const TemplateCreator(this.tcn, {super.key});
+
+  @override
+  State<StatefulWidget> createState() => _TemplateCreatorState();
+}
+
+class _TemplateCreatorState extends State<TemplateCreator> {
+  final int DRAW = 0;
+  final int UNDO = 1;
+  final int TRASH = 2;
+  final int SUBMIT = 3;
+
+  List<Offset> points = [];
+  int buttonState = -1;
+
+  @override
+  Widget build(Object context) {
+    return Column(children: [templateCanvas(), buttonRow()]);
+  }
+
+  Widget templateCanvas() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: Colors.black, width: 4),
+      ),
+      height: 400,
+      width: 500,
+      child: Listener(
+        onPointerMove: (event) {
+          setState(() {
+            if (buttonState == DRAW) {
+              points.add(event.localPosition);
+            }
+          });
+        },
+        child: CustomPaint(painter: TemplateCreatorPen(points)),
+      ),
+    );
+  }
+
+  Color buttonColor(int i) {
+    if (buttonState - i == 0) return Colors.amber;
+    return Colors.amberAccent;
+  }
+
+  Widget buttonRow() {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color.fromARGB(255, 249, 236, 197),
+        border: Border.all(color: Colors.black, width: 4),
+      ),
+      height: 100,
+      width: 500,
+      child: Row(
+        spacing: 15,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          FloatingActionButton(
+            heroTag: "tcbtn0",
+            onPressed: () {
+              setState(() {
+                buttonState = DRAW;
+              });
+            },
+            backgroundColor: buttonColor(DRAW),
+            child: Icon(Icons.edit),
+          ),
+          FloatingActionButton(
+            heroTag: "tcbtn1",
+            onPressed: () {
+              setState(() {
+                if (points.length - 2 >= 0) {
+                  points.removeRange(points.length - 2, points.length);
+                } else {
+                  points.clear();
+                }
+                buttonState = UNDO;
+              });
+            },
+            backgroundColor: buttonColor(UNDO),
+            child: Icon(Icons.undo),
+          ),
+          FloatingActionButton(
+            heroTag: "tcbtn2",
+            onPressed: () {
+              setState(() {
+                points.clear();
+                buttonState = TRASH;
+              });
+            },
+            backgroundColor: buttonColor(TRASH),
+            child: Icon(Icons.delete),
+          ),
+          FloatingActionButton(
+            heroTag: "tcbtn3",
+            onPressed: () {
+              setState(() {
+                if (points.isNotEmpty) {
+                  widget.tcn.submitPoints(points);
+                }
+                points.clear();
+                buttonState = SUBMIT;
+              });
+            },
+            backgroundColor: buttonColor(SUBMIT),
+            child: Text('Submit'),
+          ),
+        ],
+      ),
+    );
+  }
+}

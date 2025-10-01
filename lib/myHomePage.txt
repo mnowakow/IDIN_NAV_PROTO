@@ -1,0 +1,604 @@
+import 'package:flutter/material.dart';
+import 'dart:io';
+
+import 'package:idin_nav_prototype/menu.dart';
+import 'package:idin_nav_prototype/menu_notifier.dart';
+import 'package:idin_nav_prototype/paint_objects.dart';
+import 'package:idin_nav_prototype/pen.dart';
+import 'package:idin_nav_prototype/doubles_page.dart';
+import 'package:idin_nav_prototype/login_page_notifier.dart';
+import 'package:idin_nav_prototype/file.dart';
+import 'package:idin_nav_prototype/paint_objects_notifier.dart';
+import 'package:idin_nav_prototype/templateCreator.dart';
+import 'package:idin_nav_prototype/templateCreatorNotifier.dart';
+
+class MyHomePage extends StatefulWidget {
+  final LoginPageNotifier? lpNotifier;
+  const MyHomePage(this.lpNotifier, {super.key});
+
+  @override
+  State<MyHomePage> createState() => _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
+  int buttonState = 0;
+
+  String username = "";
+  CustomFile f = CustomFile('');
+  List<String> usernameList = [];
+  List<bool> usernamesChecked = [];
+  List<String> usernamesSelected = [];
+
+  List otherTotalList = [];
+  List<Offset> otherMoveOffset = [];
+  List otherScale = [];
+  List<String> otherSvgPaths = [];
+
+  TemplateCreator templateCreator = TemplateCreator(TemplateCreatorNotifier());
+  TemplateCreatorNotifier tcn = TemplateCreatorNotifier();
+  List<Offset> templatePoints = [];
+  int numTemplates = 0;
+
+  PaintObjects paintObjects = PaintObjects(
+    PaintObjectsNotifier(),
+    Offset(0.0, 0.0),
+    -1,
+    -1,
+    -1,
+    [],
+  );
+  PaintObjectsNotifier pNotifier = PaintObjectsNotifier();
+  List totalList = [];
+  List currentObject = <Offset>[];
+  List<Offset> moveOffset = <Offset>[];
+  final ValueNotifier<Offset> scrollOffsetNotifier = ValueNotifier(Offset.zero);
+  final ScrollController scrollController = ScrollController(
+    keepScrollOffset: true,
+  );
+
+  int selectedForeignObjectIndex = -1;
+  int selectedObjectIndex = -1;
+  MenuNotifier menuNotifier = MenuNotifier();
+  Menu menu = Menu(MenuNotifier());
+  int selectedMenuItem = -1;
+  List<String> symbolPaths = [];
+
+  @override
+  void initState() {
+    super.initState();
+
+    scrollController.addListener(() {
+      scrollOffsetNotifier.value = Offset(0, scrollController.offset);
+    });
+
+    menu = Menu(menuNotifier);
+
+    menuNotifier.addListener(() {
+      setState(() {
+        selectedMenuItem = menuNotifier.selectedMenuItem;
+      });
+    });
+    symbolPaths = menuNotifier.symbolPaths;
+    symbolPaths.sort();
+
+    widget.lpNotifier?.addListener(() {
+      setState(() {
+        username = widget.lpNotifier?.username ?? '';
+        setUpDatafromDirectory();
+      });
+    });
+
+    pNotifier.addListener(() {
+      setState(() {
+        switch (pNotifier.state) {
+          case 'ADDING':
+            addNewFileObject();
+            break;
+          case 'DELETING':
+            f.deleteFile(selectedObjectIndex);
+            break;
+          case 'MOVING':
+            moveFileObject();
+            break;
+          case 'SCALING':
+            scaleFileObject();
+            break;
+          default:
+            break;
+        }
+      });
+    });
+
+    tcn.addListener(() {
+      setState(() {
+        templatePoints = tcn.points;
+        addNewTemplate('', numTemplates);
+        numTemplates++;
+      });
+    });
+
+    templateCreator = TemplateCreator(tcn);
+    paintObjects = PaintObjects(
+      pNotifier,
+      scrollOffsetNotifier.value,
+      buttonState,
+      selectedObjectIndex,
+      selectedMenuItem,
+      symbolPaths,
+    );
+    totalList = paintObjects.getTotalList();
+    currentObject = paintObjects.getCurrentObject();
+    moveOffset = paintObjects.getMoveOffset();
+  }
+
+  ///main Build
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Scaffold(
+          body: Row(
+            children: [
+              Expanded(
+                child: Stack(
+                  children: [
+                    doublesPage(),
+                    togglePaint(),
+                    buttonBar(),
+                    menuPage(),
+                    objectEditButtons(),
+                    userChecklist(),
+                    templateCreatorPopUp(),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget doublesPage() {
+    return ValueListenableBuilder<Offset>(
+      valueListenable: scrollOffsetNotifier,
+      builder: (context, offset, child) {
+        return Align(child: DoublesPage(scrollController, offset));
+      },
+    );
+  }
+
+  Widget menuPage() {
+    return Visibility(
+      visible: buttonState == 3,
+      child: Center(
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.amber,
+            border: Border.all(width: 4),
+          ),
+          alignment: Alignment.center,
+          width: 508,
+          height: 500,
+          child: menu,
+        ),
+      ),
+    );
+  }
+
+  /// returns Widget that implements paintListener, toggles interaction between scrolling and drawing mode
+  Widget togglePaint() {
+    Widget l = paintListener(context);
+
+    if (buttonState != 0) {
+      return Positioned.fill(child: l);
+    }
+    return Align(alignment: Alignment.topLeft, child: l);
+  }
+
+  /// returns Listener that implements CustomPaint canvas and interaction logic
+  Widget paintListener(BuildContext context) {
+    return Listener(
+      onPointerDown: (details) {
+        setState(() {
+          paintObjects.updateStates(
+            scrollOffsetNotifier.value,
+            buttonState,
+            selectedObjectIndex,
+            selectedMenuItem,
+          );
+          selectedObjectIndex = paintObjects.onPointerDown(details);
+          if (selectedObjectIndex == -1) {
+            selectedForeignObjectIndex = findSelectedForeignObjIndex(details);
+          } else {
+            selectedForeignObjectIndex = -1;
+          }
+        });
+      },
+      onPointerMove: (details) {
+        setState(() {
+          paintObjects.onPointerMove(details);
+        });
+      },
+      onPointerUp: (details) {
+        setState(() {
+          paintObjects.onPointerUp();
+        });
+      },
+      child: CustomPaint(
+        painter: Pen(
+          totalList,
+          scrollOffsetNotifier.value,
+          moveOffset,
+          selectedObjectIndex,
+          paintObjects.getBoundingBoxes(),
+          paintObjects.getScale(),
+          buttonState,
+          otherTotalList,
+          otherMoveOffset,
+          otherScale,
+          selectedForeignObjectIndex,
+        ),
+      ),
+    );
+  }
+
+  Color buttonColor(int targetState) {
+    if (buttonState - targetState == 0) {
+      return Colors.amber;
+    } else {
+      return Colors.amberAccent;
+    }
+  }
+
+  List<Widget> buttons() {
+    return [
+      FloatingActionButton(
+        heroTag: "basebtn0",
+        onPressed: () {
+          setState(() {
+            buttonState = 0;
+          });
+        },
+        backgroundColor: buttonColor(0),
+        child: Icon(Icons.mouse),
+      ),
+      FloatingActionButton(
+        heroTag: "basebtn1",
+        onPressed: () {
+          setState(() {
+            buttonState = 1;
+          });
+        },
+        backgroundColor: buttonColor(1),
+        child: Icon(Icons.edit),
+      ),
+      FloatingActionButton(
+        heroTag: "basebtn2",
+        onPressed: () {
+          setState(() {
+            buttonState = 2;
+          });
+        },
+        backgroundColor: buttonColor(2),
+        child: Icon(Icons.pan_tool),
+      ),
+      FloatingActionButton(
+        heroTag: "basebtn3",
+        onPressed: () {
+          setState(() {
+            buttonState = 3;
+          });
+        },
+        backgroundColor: buttonColor(3),
+        child: Icon(Icons.music_note),
+      ),
+      FloatingActionButton(
+        heroTag: "basebtn4",
+        onPressed: () {
+          setState(() {
+            buttonState = 4;
+          });
+        },
+        backgroundColor: buttonColor(4),
+        child: Icon(Icons.music_note_outlined),
+      ),
+      FloatingActionButton(
+        heroTag: "basebtn5",
+        onPressed: () {
+          setState(() {
+            buttonState = 5;
+          });
+        },
+        backgroundColor: buttonColor(5),
+        child: Icon(Icons.people),
+      ),
+    ];
+  }
+
+  Widget buttonBar() {
+    return Align(
+      alignment: Alignment.bottomRight,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        spacing: 10,
+        children: buttons(),
+      ),
+    );
+  }
+
+  Widget objectEditButtons() {
+    return Visibility(
+      visible:
+          buttonState == 2 &&
+          (selectedObjectIndex != -1 || selectedForeignObjectIndex != -1),
+      child: Padding(
+        padding: edgeInset(),
+        child: Column(
+          children: [
+            FloatingActionButton(
+              heroTag: "copybtn0",
+              onPressed: () {
+                copySelectedObj();
+                addNewFileObject();
+              },
+              backgroundColor: Colors.lightBlue,
+              child: Icon(Icons.copy),
+            ),
+            Visibility(
+              visible: selectedObjectIndex != -1,
+              child: FloatingActionButton(
+                heroTag: "deletebtn0",
+                onPressed: () {
+                  setState(() {
+                    if (selectedObjectIndex != -1) {
+                      selectedObjectIndex = paintObjects.deleteSelectedObject();
+                      paintObjects.updateStates(
+                        scrollOffsetNotifier.value,
+                        buttonState,
+                        selectedObjectIndex,
+                        selectedMenuItem,
+                      );
+                    }
+                  });
+                },
+                backgroundColor: Colors.lightBlue,
+                child: Icon(Icons.delete),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget templateCreatorPopUp() {
+    return Visibility(
+      visible: buttonState == 4,
+      child: Center(
+        child: Container(
+          alignment: Alignment.center,
+          width: 500,
+          height: 500,
+          child: templateCreator,
+        ),
+      ),
+    );
+  }
+
+  Widget userChecklist() {
+    return Visibility(
+      visible: buttonState == 5,
+      child: Center(
+        child: Container(
+          alignment: Alignment.center,
+          width: 300,
+          height: 400,
+          decoration: BoxDecoration(
+            color: Colors.amberAccent,
+            border: Border.all(width: 4),
+          ),
+          child: Scrollbar(thickness: 4, child: ListView(children: users())),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> users() {
+    List<Widget> list = [];
+
+    for (int i = 0; i < usernameList.length; i++) {
+      usernamesChecked.add(false);
+      list.add(
+        CheckboxListTile(
+          title: Text(usernameList[i]),
+          activeColor: Colors.blueAccent,
+          shape: RoundedRectangleBorder(
+            side: BorderSide(color: Colors.black, width: 2.0),
+          ),
+          tileColor: const Color.fromARGB(255, 185, 230, 250),
+          selectedTileColor: const Color.fromARGB(255, 132, 216, 254),
+          value: usernamesChecked[i],
+          onChanged: (bool? value) {
+            setState(() {
+              if (usernamesChecked[i]) {
+                usernamesSelected.remove(usernameList[i]);
+              } else {
+                usernamesSelected.add(usernameList[i]);
+              }
+              setUpDiffsData();
+              usernamesChecked[i] = value!;
+            });
+          },
+        ),
+      );
+    }
+
+    return list;
+  }
+
+  EdgeInsets edgeInset() {
+    if ((selectedObjectIndex == -1 && selectedForeignObjectIndex == -1) ||
+        buttonState != 2)
+      return EdgeInsets.all(0.0);
+    double scale = 1.0;
+    Rect bBox = Rect.fromPoints(Offset(0.0, 0.0), Offset(0.0, 0.0));
+    Offset mvOffset = Offset(0.0, 0.0);
+
+    if (selectedObjectIndex != -1) {
+      scale = paintObjects.getScale()[selectedObjectIndex];
+      bBox = paintObjects.getBoundingBoxes()[selectedObjectIndex];
+      mvOffset = moveOffset[selectedObjectIndex];
+    } else {
+      bBox = otherTotalList[selectedForeignObjectIndex][0].getBounds().shift(
+        otherTotalList[selectedForeignObjectIndex][1],
+      );
+      mvOffset = otherMoveOffset[selectedForeignObjectIndex];
+    }
+
+    double left = bBox.bottomLeft.dx + (bBox.width * scale) + mvOffset.dx + 5;
+    double top = (bBox.topRight - scrollOffsetNotifier.value + mvOffset).dy;
+    double right = 0;
+    double bottom = 0;
+
+    return EdgeInsets.fromLTRB(left, top, right, bottom);
+  }
+
+  void setUpDatafromDirectory() async {
+    f = CustomFile(username);
+    usernameList = await f.usernameList();
+    List data = await f.readData(username);
+    numTemplates = await f.numTemplates();
+    setUpCustomTemplates();
+    paintObjects.setUpDatafromDirectory(data);
+  }
+
+  void setUpCustomTemplates() async {
+    File file = File('');
+    String parentPath = '${f.directory.path}/templates';
+    for (int i = 0; i < numTemplates; i++) {
+      file = File('$parentPath/$i.svg');
+      addNewTemplate(await file.readAsString(), i);
+    }
+  }
+
+  void addNewTemplate(String content, int numTemps) {
+    if (content.isEmpty) {
+      content = paintObjects.offsetsListToPath(
+        paintObjects.createSvgPoints(templatePoints),
+        Offset(0.0, 0.0),
+      );
+      content = content.substring(0, content.length - 1);
+      content =
+          '<svg width="300" height="400"> <path d="$content" fill="transparent" stroke="black" transform="scale(0.9 0.9) translate(-100 -50)" /> </svg>';
+    }
+    f.writeTemplateData(content, numTemps);
+    menuNotifier.addSymbolPath('${f.directory.path}/templates/$numTemps.svg');
+  }
+
+  void setUpDiffsData() async {
+    List userData = await f.readUserListData(usernamesSelected);
+
+    otherTotalList.clear();
+    otherMoveOffset.clear();
+    otherScale.clear();
+    otherSvgPaths.clear();
+
+    for (int i = 0; i < userData.length; i++) {
+      otherTotalList.addAll(paintObjects.returnSvgData(userData[i]));
+      otherMoveOffset.addAll(paintObjects.returnMoveOffsetData(userData[i]));
+      otherScale.addAll(paintObjects.returnScaleData(userData[i]));
+      otherSvgPaths.addAll(paintObjects.returnSvgPaths(userData[i]));
+    }
+  }
+
+  void addNewFileObject() {
+    Rect currBox = paintObjects.getBoundingBoxes()[selectedObjectIndex];
+    Offset topLeft = currBox.topLeft;
+    Offset botRight = currBox.bottomRight;
+
+    int objectIndex = selectedObjectIndex;
+    String svg = paintObjects.getSvgPaths()[objectIndex];
+    String localOffset =
+        '${totalList[objectIndex][1].dx},${totalList[objectIndex][1].dy}';
+    String moveOffsetStr =
+        '${moveOffset[objectIndex].dx},${moveOffset[objectIndex].dy}';
+    String bBox = '${topLeft.dx},${topLeft.dy}|${botRight.dx},${botRight.dy}';
+    double scale = paintObjects.getScale()[objectIndex];
+
+    f.writeData(objectIndex, svg, localOffset, moveOffsetStr, bBox, scale);
+  }
+
+  void moveFileObject() {
+    if (selectedObjectIndex >= 0) {
+      String moveOffsetStr =
+          '${moveOffset[selectedObjectIndex].dx},${moveOffset[selectedObjectIndex].dy}';
+      f.writeMoveOffset(selectedObjectIndex, moveOffsetStr);
+    }
+  }
+
+  void scaleFileObject() {
+    String scale = paintObjects.getScale()[selectedObjectIndex].toString();
+    f.writeScale(selectedObjectIndex, scale);
+  }
+
+  int findSelectedForeignObjIndex(PointerDownEvent details) {
+    int forObjInd = -1;
+    Path p = Path();
+    Rect r = Rect.fromPoints(Offset(0.0, 0.0), Offset(0.0, 0.0));
+
+    for (int i = 0; i < otherTotalList.length; i++) {
+      p = otherTotalList[i][0];
+      r = Rect.fromPoints(
+        p.getBounds().topRight -
+            scrollOffsetNotifier.value +
+            otherMoveOffset[i] +
+            otherTotalList[i][1],
+        p.getBounds().bottomLeft -
+            scrollOffsetNotifier.value +
+            otherMoveOffset[i] +
+            otherTotalList[i][1],
+      );
+      if (r.contains(details.localPosition)) {
+        forObjInd = i;
+        break;
+      }
+    }
+
+    return forObjInd;
+  }
+
+  void copySelectedObj() {
+    Path p = Path();
+    String svgPath = '';
+    Offset specMoveOffset = Offset(0.0, 0.0);
+    Offset mvOffset = Offset(0.0, 0.0);
+    Rect bBox = Rect.fromPoints(Offset(0.0, 0.0), Offset(0.0, 0.0));
+    double scale = 1.0;
+
+    if (selectedObjectIndex != -1) {
+      p = totalList[selectedObjectIndex][0];
+      specMoveOffset = totalList[selectedObjectIndex][1];
+      mvOffset = moveOffset[selectedObjectIndex];
+      bBox = paintObjects.getBoundingBoxes()[selectedObjectIndex];
+      scale = paintObjects.getScale()[selectedObjectIndex];
+      svgPath = paintObjects.getSvgPaths()[selectedObjectIndex];
+    } else {
+      p = otherTotalList[selectedForeignObjectIndex][0];
+      mvOffset = otherMoveOffset[selectedForeignObjectIndex];
+      specMoveOffset = otherTotalList[selectedForeignObjectIndex][1];
+      bBox = Rect.fromPoints(
+        specMoveOffset,
+        specMoveOffset + Offset(p.getBounds().width, p.getBounds().height),
+      );
+      svgPath = otherSvgPaths[selectedForeignObjectIndex];
+    }
+
+    selectedObjectIndex = totalList.length;
+    totalList.add([p, specMoveOffset]);
+    moveOffset.add(mvOffset);
+    paintObjects.getBoundingBoxes().add(bBox);
+    paintObjects.getScale().add(scale);
+    paintObjects.getSvgPaths().add(svgPath);
+  }
+}
